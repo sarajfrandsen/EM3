@@ -1,0 +1,330 @@
+---
+title: "em3_databehandling"
+format: pdf
+editor: visual
+---
+
+## EM3
+
+```{r}
+library(tidyverse)
+library(broom)
+library(emmeans)
+library(ggplot2)
+library(ggsignif)
+library(BayesFactor)
+```
+
+```{r}
+data <- read_csv("sub-1709_ses-1_20260519_093203.csv")
+```
+
+Pre-processing
+
+```{r}
+
+df <- data %>%
+  filter(!is.na(agency_rating), block != 0) %>%
+  mutate(
+    # collapse conditions into social vs non-social
+    social_context = case_when(
+      condition %in% c("social", "ai_social") ~ "social",
+      condition %in% c("nonsocial", "ai_nonsocial") ~ "non-social"
+    ),
+    social_context = factor(social_context),
+    
+    ai_context = case_when(
+      condition %in% c("ai_nonsocial", "ai_social") ~ "ai",
+      condition %in% c("nonsocial", "social") ~ "non-ai"
+    ),
+    social_context = factor(social_context),
+    
+    # z-score outcome
+    outcome_z = as.numeric(scale(points_lost))
+  )
+
+df_analysis <- df %>% 
+  filter(balloon_pop != 1, coplayer_acted != 1)
+
+df_social <- df_analysis %>% 
+  filter(condition %in% c("social", "ai_social"))
+
+df_nonsocial <- df_analysis %>% 
+  filter(condition %in% c("nonsocial", "ai_nonsocial"))
+
+df_ai <- df_analysis %>%
+  filter(condition %in% c("ai_social", "ai_nonsocial"))
+
+df_nonai <- df_analysis %>%
+  filter(condition %in% c("social", "nonsocial"))
+
+```
+
+Trials to exclude
+
+```{r}
+
+pops <- df %>% filter(balloon_pop == 1)
+coplayer_acted <- df %>% filter(coplayer_acted == 1)
+
+# calculate percentage
+pop_rate <- nrow(pops) / nrow(df) * 100
+coplayer_acted_rate <- nrow(coplayer_acted) / nrow(df) * 100
+
+```
+
+Mean agency ratings
+
+```{r}
+
+df_analysis$condition <- factor(
+  df_analysis$condition,
+  levels = c(
+    "nonsocial",
+    "social",
+    "ai_nonsocial",
+    "ai_social"
+  )
+)
+
+df_summary <- df_analysis %>%
+  group_by(condition) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+df_summary_social <- df_analysis %>%
+  group_by(social_context) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+
+df_summary_ai <- df_analysis %>%
+  group_by(ai_context) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+summary_pops <- pops %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+summary_coplayer_acted <- coplayer_acted %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+
+# plot
+ggplot(df_summary, aes(x = condition, y = mean_agency, fill = condition)) +
+  geom_col(width = 0.8) +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  coord_cartesian(ylim = c(0, 9)) +
+  geom_signif(
+    comparisons = list(
+      c("ai_nonsocial", "nonsocial"),
+      c("ai_nonsocial", "social")
+      ),
+    annotations = c("***", "**"),
+    y_position = c(9, 8.5),
+    tip_length = 0.05
+  ) +
+  scale_fill_manual(values = c(
+    "social" = "#FA5252",
+    "ai_nonsocial" = "#74C0FC",
+    "ai_social" = "#C77DCE",
+    "nonsocial" = "#ADB5BD"
+  )) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal() +
+  theme(
+  panel.grid = element_blank()
+  )
+
+ggplot(df_summary_social, aes(x = social_context, y = mean_agency)) +
+  geom_col(fill = "blue") +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal()
+
+ggplot(df_summary_ai, aes(x = ai_context, y = mean_agency)) +
+  geom_col(fill = "blue") +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal()
+
+```
+
+Social context vs outcome
+
+```{r}
+
+# with ai
+ggplot(df_ai, aes(x = outcome_z, y = agency_rating, color = social_context)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "With AI",
+    x = "Outcome (z)",
+    y = "Agency rating",
+    color = "Social context"
+  ) +
+  theme_minimal()
+
+# without ai
+ggplot(df_nonai, aes(x = outcome_z, y = agency_rating, color = social_context)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Without AI",
+    x = "Outcome (z)",
+    y = "Agency rating",
+    color = "Social context"
+  ) +
+  theme_minimal()
+
+# both
+ggplot(df, aes(x = outcome_z, y = agency_rating, color = social_context)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "All conditions",
+    x = "Outcome (z)",
+    y = "Agency rating",
+    color = "Social context"
+  ) +
+  theme_minimal()
+```
+
+Linear models
+
+```{r}
+
+model <- lm(
+  agency_rating ~ outcome_z + condition,
+  data = df_analysis
+)
+
+summary(model)
+
+emmeans(model, pairwise ~ condition)
+
+plot(emmeans(model, ~ condition))
+
+plot(allEffects(model))
+
+```
+
+```{r}
+
+model2 <- lm(
+  agency_rating ~ social_context * ai_context,
+  data = df_analysis
+)
+
+summary(model2)
+
+emmeans(model2, pairwise ~ social_context * ai_context)
+
+plot(emmeans(model2, ~ social_context + ai_context))
+
+emmip(model2, social_context ~ ai_context)
+
+plot(allEffects(model2))
+
+
+```
+
+Bayesian t tests
+
+```{r}
+
+# social effect (nonsocial vs social)
+ttestBF(
+  x = df_analysis$agency_rating[df_analysis$condition == "nonsocial"],
+  y = df_analysis$agency_rating[df_analysis$condition == "social"],
+  paired = TRUE
+)
+
+# ai effect (nonsocial vs ai_nonsocial)
+ttestBF(
+  x = df_analysis$agency_rating[df_analysis$condition == "nonsocial"],
+  y = df_analysis$agency_rating[df_analysis$condition == "ai_nonsocial"],
+  paired = TRUE
+)
+
+# combined effect (ai_social vs nonsocial)
+ttestBF(
+  x = df_analysis$agency_rating[df_analysis$condition == "nonsocial"],
+  y = df_analysis$agency_rating[df_analysis$condition == "ai_social"],
+  paired = TRUE
+)
+
+```
+
+Bayes model
+
+```{r}
+
+bf_model <- generalTestBF(
+  agency_rating ~ condition * outcome_z,
+  data = df_analysis
+)
+
+bf_model
+
+```
+
+```{r}
+
+model3 <- lm(
+  agency_rating ~ profile,
+  data = df_analysis
+)
+
+summary(model3)
+
+emmeans(model3, pairwise ~ profile)
+
+plot(emmeans(model3, ~ profile + outcome_z))
+
+emmip(model3, outcome_z ~ profile)
+
+plot(allEffects(model3))
+
+```
+
+```{r}
+
+profile_counts <- df_analysis %>%
+  count(condition, profile) %>%
+  group_by(condition) %>%
+  mutate(prop = n / sum(n))
+
+ggplot(profile_counts, aes(profile, prop, fill = condition)) +
+  geom_col(position = "dodge") + 
+  theme_minimal()
+
+```

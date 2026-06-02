@@ -1,0 +1,220 @@
+---
+title: "em3_pilot"
+format: pdf
+editor: visual
+---
+
+## EM3 pilot
+
+```{r}
+library(tidyverse)
+library(broom)
+library(emmeans)
+library(ggplot2)
+library(ggsignif)
+library(BayesFactor)
+```
+
+```{r}
+list_of_files <- setdiff(dir(pattern=".csv"), "sub-1709_ses-1_20260519_093203.csv")
+
+data <- read_delim(list_of_files)
+```
+
+Pre-processing
+
+```{r}
+
+df <- data %>%
+  filter(!is.na(agency_rating), block != 0) %>%
+  mutate(
+    # collapse conditions into social vs non-social
+    social_context = case_when(
+      condition %in% c("social", "ai_social") ~ "social",
+      condition %in% c("nonsocial", "ai_nonsocial") ~ "non-social"
+    ),
+    social_context = factor(social_context),
+    
+    ai_context = case_when(
+      condition %in% c("ai_nonsocial", "ai_social") ~ "ai",
+      condition %in% c("nonsocial", "social") ~ "non-ai"
+    ),
+    social_context = factor(social_context),
+    
+    # z-score outcome
+    outcome_z = as.numeric(scale(points_lost))
+  )
+
+df_social <- df %>% 
+  filter(condition %in% c("social", "ai_social"))
+
+df_nonsocial <- df %>% 
+  filter(condition %in% c("nonsocial", "ai_nonsocial"))
+
+df_ai <- df %>%
+  filter(condition %in% c("ai_social", "ai_nonsocial"))
+
+df_nonai <- df %>%
+  filter(condition %in% c("social", "nonsocial"))
+
+df_analysis <- df %>% 
+  filter(balloon_pop != 1, coplayer_acted != 1)
+
+
+```
+
+Error rates
+
+```{r}
+
+pops <- df %>% filter(balloon_pop == 1)
+coplayer_acted <- df %>% filter(coplayer_acted == 1)
+
+# calculate percentage
+pop_rate <- nrow(pops) / nrow(df) * 100
+coplayer_acted_rate <- nrow(coplayer_acted) / nrow(df_social) * 100
+
+```
+
+Mean agency ratings
+
+```{r}
+
+df_analysis$condition <- factor(
+  df_analysis$condition,
+  levels = c(
+    "nonsocial",
+    "social",
+    "ai_nonsocial",
+    "ai_social"
+  )
+)
+
+df_summary <- df_analysis %>%
+  group_by(condition) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+df_summary_social <- df_analysis %>%
+  group_by(social_context) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+
+df_summary_ai <- df_analysis %>%
+  group_by(ai_context) %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+summary_pops <- pops %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+summary_coplayer_acted <- coplayer_acted %>%
+  summarise(
+    mean_agency = mean(agency_rating, na.rm = TRUE),
+    se = sd(agency_rating, na.rm = TRUE) / sqrt(n())
+  )
+
+
+# plot
+ggplot(df_summary, aes(x = condition, y = mean_agency, fill = condition)) +
+  geom_col(width = 0.8) +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  coord_cartesian(ylim = c(0, 9)) +
+  geom_signif(
+    comparisons = list(
+      c("ai_nonsocial", "nonsocial"),
+      c("ai_social", "nonsocial")
+    ),
+    annotations = c("*", "*"),
+    y_position = c(9, 8.5),
+    tip_length = 0.05
+  ) +
+  scale_fill_manual(values = c(
+    "social" = "#FA5252",
+    "ai_nonsocial" = "#74C0FC",
+    "ai_social" = "#C77DCE",
+    "nonsocial" = "#ADB5BD"
+  )) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal() +
+  theme(
+  panel.grid = element_blank()
+  )
+
+
+ggplot(df_summary_social, aes(x = social_context, y = mean_agency)) +
+  geom_col(fill = "blue") +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal()
+
+ggplot(df_summary_ai, aes(x = ai_context, y = mean_agency)) +
+  geom_col(fill = "blue") +
+  geom_errorbar(aes(ymin = mean_agency - se,
+                    ymax = mean_agency + se),
+                width = 0.2) +
+  labs(
+    x = "Condition",
+    y = "Mean agency rating"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+
+model <- lmer(
+  agency_rating ~ condition + outcome_z + (1 | participant),
+  data = df_analysis
+)
+
+summary(model)
+
+emmeans(model, pairwise ~ condition)
+
+plot(emmeans(model, ~ condition))
+
+plot(allEffects(model))
+
+
+```
+
+```{r}
+
+model2 <- lmer(
+  agency_rating ~ social_context * ai_context + (1 | participant),
+  data = df_analysis
+)
+
+summary(model2)
+
+emmeans(model2, pairwise ~ social_context * ai_context)
+
+plot(emmeans(model2, ~ social_context + ai_context))
+
+emmip(model2, social_context ~ ai_context)
+
+plot(allEffects(model2))
+
+```
